@@ -1,0 +1,84 @@
+# Every tunable number in the project. The data is SYNTHETIC: `generate` builds it from the settings below,
+# so the true components (trend, seasonality, festival uplift, promotions, price effect, the structural break,
+# missing days and outliers) are known and the backtest findings can be checked against them.
+
+data:
+  seed: 42
+  start: "2023-01-01"
+  end: "2025-12-31"           # last day with sales; forecasts start the day after
+  plan_days_after_end: 56     # the price/promotion plan is known this far ahead (needed for future exog)
+  n_stores: 10
+  noise_shape: 12             # gamma-Poisson shape: lower = noisier counts
+  missing_store_days: 6       # whole-store feed outages per store (rows absent from sales.csv)
+  missing_cell_rate: 0.004    # extra random store × category × day rows absent
+  outlier_rate: 0.0015        # rows multiplied by 4-8× (bulk orders, keying errors)
+  structural_break:           # a competitor opens next to one store
+    store: S07
+    date: "2025-03-01"
+    factor: 0.65
+  price_increase:             # chain-wide list-price rise for one category
+    category: dairy
+    date: "2024-07-01"
+    factor: 1.10
+  promotions_per_year: 7      # per series, each 3-7 days with a 10-30% discount
+  promo_display_lift: 1.25    # extra lift from the display, on top of the price effect
+
+# base: units/day in an average-sized store · elasticity: demand ∝ (price / list price)^elasticity
+# weekend: Sat/Sun multiplier · yearly: amplitude of the annual cycle, peak_doy: its peak day of year
+# festival: uplift at the festival peak (ramps up over the window)
+categories:
+  grocery:       {base: 120, list_price: 60,   elasticity: -0.6, weekend: 1.15, yearly: 0.05, peak_doy: 300, festival: 0.25}
+  dairy:         {base: 90,  list_price: 45,   elasticity: -0.5, weekend: 1.10, yearly: 0.08, peak_doy: 330, festival: 0.30}
+  beverages:     {base: 70,  list_price: 40,   elasticity: -1.4, weekend: 1.30, yearly: 0.30, peak_doy: 140, festival: 0.20}
+  snacks:        {base: 60,  list_price: 30,   elasticity: -1.6, weekend: 1.35, yearly: 0.06, peak_doy: 320, festival: 1.20}
+  personal_care: {base: 25,  list_price: 150,  elasticity: -1.0, weekend: 1.10, yearly: 0.04, peak_doy: 90,  festival: 0.30}
+  household:     {base: 18,  list_price: 120,  elasticity: -0.9, weekend: 1.20, yearly: 0.05, peak_doy: 290, festival: 0.60}
+  electronics:   {base: 0.9, list_price: 2500, elasticity: -1.8, weekend: 1.40, yearly: 0.05, peak_doy: 300, festival: 1.50}
+  home_decor:    {base: 1.2, list_price: 800,  elasticity: -1.5, weekend: 1.30, yearly: 0.05, peak_doy: 300, festival: 1.80}
+
+calendar:
+  # Festival season: demand ramps up over `days_before` and falls back `days_after` the peak.
+  # The peaks follow the Diwali dates; any festival calendar can be dropped in here.
+  festival:
+    days_before: 21
+    days_after: 2
+    peaks: ["2023-11-12", "2024-11-01", "2025-10-20", "2026-11-08"]
+  # Single-day holidays (month-day). Stores trade shorter hours, so demand is lower.
+  holidays:
+    dates: ["01-26", "08-15", "10-02"]
+    factor: 0.75
+  year_end:                   # Dec 24-31 sale
+    start: "12-24"
+    factor: 1.12
+
+prep:
+  gap_fill_weeks: 4           # a missing day = median of the same weekday over the previous 4 weeks
+  outlier_window: 28          # trailing window for the median and IQR (no future data)
+  outlier_k: 6.0              # flag above median + k × IQR/1.349 (promo and calendar-event days exempt)
+
+backtest:
+  horizon: 28
+  n_cutoffs: 6                # expanding window, the last test window ends on the last day of data
+  step: 28
+  models: [seasonal_naive, moving_average, ets, croston_sba, gbm, ensemble]
+  interval_levels: [0.80, 0.95]
+  min_calibration_folds: 2    # intervals for fold k are calibrated on folds < k only
+
+models:
+  moving_average: {window: 28}
+  ets: {season: 7, fit_window: 730}            # additive damped Holt-Winters, ETS(A,Ad,A)
+  croston_sba: {alpha: 0.1}
+  gbm:
+    lags: [1, 2, 7, 14, 21, 28]
+    rolling: [7, 28]
+    max_iter: 250
+    learning_rate: 0.06
+    max_leaf_nodes: 31
+    min_samples_leaf: 40
+    train_window: 730
+    n_threads: 1              # OpenMP threads for training and prediction
+  ensemble: {members: [ets, gbm]}
+
+api:
+  max_horizon: 28
+  max_batch: 200

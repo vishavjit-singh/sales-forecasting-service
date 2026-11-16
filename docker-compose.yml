@@ -1,0 +1,12 @@
+# docker compose up --build   → API on http://localhost:8000  (try: curl "localhost:8000/forecast?store=S01&horizon=7")
+name: salesforecast
+
+services:
+  api:
+    build: .
+    image: sales-forecast-api:latest
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      retries: 10

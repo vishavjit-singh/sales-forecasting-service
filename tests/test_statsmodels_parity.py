@@ -27,7 +27,21 @@ def test_fixed_parameters_give_identical_fits_and_forecasts(seed):
                     optimized=False)
     ours, state = hw_filter(y[None, :], a, b, g, phi, l0, b0, s0, 7)
     assert np.allclose(ours[0], fit.fittedvalues, rtol=1e-8, atol=1e-6)
-    assert np.allclose(hw_forecast(state, phi, 28)[0], fit.forecast(28), rtol=1e-8, atol=1e-6)
+    # Same final states as statsmodels.
+    assert np.allclose([state.level[0], state.trend[0]], [fit.level[-1], fit.trend[-1]], rtol=1e-8, atol=1e-6)
+    # fit.season[-7:][i] is the seasonal of observation n−7+i, which our state keeps in slot (n + i) % 7.
+    assert np.allclose(state.season[0, (len(y) + np.arange(7)) % 7], fit.season[-7:], rtol=1e-8, atol=1e-6)
+
+    h = np.arange(1, 29)
+    forecast = hw_forecast(state, phi, 28)[0]
+    # ŷ_{n+h} = l_n + (φ + … + φ^h) b_n + s_{n+h−m(k+1)}, from statsmodels' own final states.
+    textbook = fit.level[-1] + np.cumsum(phi ** h) * fit.trend[-1] + fit.season[-7:][(h - 1) % 7]
+    assert np.allclose(forecast, textbook, rtol=1e-8, atol=1e-6)
+    # statsmodels' forecast() agrees except at h = m, 2m, …: HoltWintersResults._predict overwrites the
+    # seasonal updated by the last observation with the one from a cycle earlier
+    # (s[nobs + m - 1:] = [s[(nobs - 1) + j % m] ...]), so those steps are compared to the textbook only.
+    off_cycle = h % 7 != 0
+    assert np.allclose(forecast[off_cycle], fit.forecast(28)[off_cycle], rtol=1e-8, atol=1e-6)
 
 
 @pytest.mark.parametrize("seed", [3, 4, 5])
